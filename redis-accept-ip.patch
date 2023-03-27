@@ -1,0 +1,63 @@
+--- redis/src/anet.c	2023-03-20 18:16:50.000000000 +0100
++++ redis.mod/src/anet.c	2023-03-27 11:30:29.932879652 +0200
+@@ -536,6 +536,40 @@
+     return fd;
+ }
+ 
++/* Eulerian - patch redis local ip only
++ * Return 0 if private
++ *  -1 on error
++ *   1 on public ip
++ * */
++static inline int8_t _sock_ip_public( int fd ) {
++  struct sockaddr_storage sa;
++  socklen_t salen = sizeof(sa);
++
++  if (getsockname(fd, (struct sockaddr *)&sa, &salen) == -1)
++    return -1;
++
++  if (sa.ss_family == AF_INET) {
++    uint32_t ip = htonl(
++      ((struct sockaddr_in *)&sa)->sin_addr.s_addr );
++
++#define _IP_BETWEEN( a, b )   (ip>=a && ip<=b)
++    if (
++      _IP_BETWEEN(167772160U,  184549375U) // 10.0.0.0/8
++      || _IP_BETWEEN(1681915904U, 1686110207U) // 100.64.0.0/10
++      || _IP_BETWEEN(2130706432U, 2147483647U) // 127.0.0.0/8
++      || _IP_BETWEEN(2886729728U, 2887778303U) // 172.16.0.0/12
++      || _IP_BETWEEN(3221225984U, 3221226239U) // 192.0.2.0/24
++      || _IP_BETWEEN(3227017984U, 3227018239U) // 192.88.99.0/24
++      || _IP_BETWEEN(3232235520U, 3232301055U) // 192.168.0.0/16
++      || _IP_BETWEEN(2851995648U, 2852061183U) // 169.254.0.0/16
++      ) {
++      return 0;
++    }
++  }
++  return 1;
++}
++/* /Eulerian */
++
+ /* Accept a connection and also make sure the socket is non-blocking, and CLOEXEC.
+  * returns the new socket FD, or -1 on error. */
+ int anetTcpAccept(char *err, int serversock, char *ip, size_t ip_len, int *port) {
+@@ -549,6 +583,19 @@
+         struct sockaddr_in *s = (struct sockaddr_in *)&sa;
+         if (ip) inet_ntop(AF_INET,(void*)&(s->sin_addr),ip,ip_len);
+         if (port) *port = ntohs(s->sin_port);
++        /* Eulerian - patch redis local ip only */
++        if ( _sock_ip_public( fd ) ) {
++#if 0
++          char denied_ip[64]; int il=63;
++          inet_ntop(AF_INET,(void*)&(((struct sockaddr_in *)&sa)->sin_addr),
++                    denied_ip, il);
++          fprintf(stderr, "IP public - denied connection from: %s\n", denied_ip);
++#endif
++          close (fd);
++          return ANET_ERR;
++        }
++        /* /Eulerian */
++
+     } else {
+         struct sockaddr_in6 *s = (struct sockaddr_in6 *)&sa;
+         if (ip) inet_ntop(AF_INET6,(void*)&(s->sin6_addr),ip,ip_len);
